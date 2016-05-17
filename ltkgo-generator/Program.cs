@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Xml;
@@ -9,6 +10,11 @@ namespace ltkgo_generator
 {
     class Program
     {
+        static string getFriendly(string unfriendly)
+        {
+            return String.Concat(unfriendly.Split('_').Select(i => i.Substring(0, 1).ToUpper() + i.Substring(1).ToLower()));
+        }
+
         static string mapLlrpTypeToGoType(string llrpType)
         {
             switch (llrpType)
@@ -62,6 +68,10 @@ namespace ltkgo_generator
 
                 case "s8":
                 case "s16":
+                    return "int16";
+
+                case "s32":
+                    return "int32";
 
                 case "u2":
                 case "u96":
@@ -76,13 +86,13 @@ namespace ltkgo_generator
 
                 default:
                     Console.WriteLine("Unknown LLRP type: " + llrpType);
-                    return String.Empty;
+                    return llrpType;
             }
         }
 
         static void Main(string[] args)
         {
-            var r = XmlReader.Create("llrp-1x0-def.xml");
+            var r = XmlReader.Create("input/llrp-1x0-def.xml");
             while (r.NodeType != XmlNodeType.Element)
                 r.Read();
             var root = XElement.Load(r);
@@ -102,6 +112,7 @@ namespace ltkgo_generator
                     w.WriteLine();
                     w.WriteLine(String.Format("type {0} struct {{", name));
 
+                    w.WriteLine("\t// fields");
                     foreach (var field in el.Elements(ld + "field"))
                     {
                         String fieldName = field.Attribute("name").Value,
@@ -111,6 +122,36 @@ namespace ltkgo_generator
                             fieldName,
                             type,
                             fieldName);
+                    }
+                    w.WriteLine();
+
+                    w.WriteLine("\t// params");
+                    foreach (var param in el.Elements(ld + "parameter"))
+                    {
+                        String paramName = param.Attribute("type").Value,
+                            paramType = mapLlrpTypeToGoType(param.Attribute("type").Value),
+                            paramRepeat = param.Attribute("repeat").Value;
+
+                        var isArray = paramRepeat.Contains("-N");
+                        w.WriteLine("\t{0} {1} `xml:\"{2}\"`",
+                            paramName,
+                            isArray ? "[]" + paramType : paramType,
+                            paramName);
+                    }
+                    w.WriteLine();
+
+                    w.WriteLine("\t// choices");
+                    foreach (var choice in el.Elements(ld + "choice"))
+                    {
+                        String choiceName = choice.Attribute("type").Value,
+                            choiceType = "interface{}",
+                            choiceRepeat = choice.Attribute("repeat").Value;
+
+                        var isArray = choiceRepeat.Contains("-N");
+                        w.WriteLine("\t{0} {1} `xml:\"{2}\"`",
+                            choiceName,
+                            isArray ? "[]" + choiceType : choiceType,
+                            choiceName);
                     }
 
                     w.WriteLine("}");
@@ -131,13 +172,14 @@ namespace ltkgo_generator
             {
                 String name = el.Attribute("name").Value;
 
-                using (var fs = File.Create(name + ".go"))
+                using (var fs = File.Create(getFriendly(name) + ".go"))
                 using (var w = new StreamWriter(fs))
                 {
                     w.WriteLine("package ltkgo");
                     w.WriteLine();
-                    w.WriteLine(String.Format("type {0} struct {{", name));
+                    w.WriteLine(String.Format("type {0} struct {{", getFriendly(name)));
 
+                    w.WriteLine("\t// fields");
                     foreach (var field in el.Elements(ld + "field"))
                     {
                         String fieldName = field.Attribute("name").Value,
@@ -148,19 +190,22 @@ namespace ltkgo_generator
                             fieldType,
                             fieldName);
                     }
+                    w.WriteLine();
 
+                    w.WriteLine("\t// params");
                     foreach (var param in el.Elements(ld + "parameter"))
                     {
                         String paramName = param.Attribute("type").Value,
                             paramType = mapLlrpTypeToGoType(param.Attribute("type").Value),
                             paramRepeat = param.Attribute("repeat").Value;
 
-                        var isArray = paramRepeat == "0-N";
+                        var isArray = paramRepeat.Contains("-N");
                         w.WriteLine("\t{0} {1} `xml:\"{2}\"`",
                             paramName,
                             isArray ? "[]" + paramType : paramType,
                             paramName);
                     }
+                    w.WriteLine();
 
                     w.WriteLine("}");
 
@@ -168,15 +213,15 @@ namespace ltkgo_generator
                     if (hasResponse)
                     {
                         var response = el.Attribute("responseType").Value;
-
+                        
                         w.WriteLine();
-                        w.WriteLine(String.Format("func (s {0}) GetResponseType() interface {{}} {{", name));
-                        w.WriteLine(String.Format("\treturn reflect.TypeOf((*{0})(nil)).Elem()", response));
+                        w.WriteLine(String.Format("func (s {0}) GetResponseType() reflect.Type {{", getFriendly(name)));
+                        w.WriteLine(String.Format("\treturn reflect.TypeOf((*{0})(nil)).Elem()", getFriendly(response)));
                         w.WriteLine("}");
                     }
                 }
 
-                using (var fs = File.Create(name + "_test.go"))
+                using (var fs = File.Create(getFriendly(name) + "_test.go"))
                 using (var w = new StreamWriter(fs))
                 {
                     w.WriteLine("package ltkgo_test");
@@ -214,6 +259,8 @@ namespace ltkgo_generator
                     w.WriteLine(")");
                 }
             }
+
+            Debugger.Break();
         }
     }
 }
